@@ -1,0 +1,238 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  ADMIN
+  DOCTOR
+  PHARMACIST
+}
+enum PatientStatus {
+  ACTIVE
+  FOLLOW_UP
+  NEW
+}
+enum InvoiceStatus {
+  PAID
+  PENDING
+  OVERDUE
+  VOID
+}
+enum AppointmentStatus {
+  SCHEDULED
+  CHECKED_IN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  authUserId   String?  @unique
+  email        String   @unique
+  name         String
+  role         Role     @default(DOCTOR)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  appointments Appointment[]
+  prescriptions Prescription[]
+  visits       Visit[]
+  auditLogs    AuditLog[]
+}
+
+model Patient {
+  id              String          @id @default(cuid())
+  recordNumber    String          @unique
+  firstName       String
+  lastName        String
+  dateOfBirth     DateTime
+  gender          String
+  phone           String?
+  email           String?
+  bloodType       String?
+  allergies       String[]        @default([])
+  status          PatientStatus   @default(ACTIVE)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  appointments    Appointment[]
+  visits          Visit[]
+  prescriptions   Prescription[]
+  invoices        Invoice[]
+  @@index([lastName, firstName])
+  @@index([phone])
+}
+
+model Appointment {
+  id          String            @id @default(cuid())
+  patientId   String
+  clinicianId String
+  startsAt    DateTime
+  endsAt      DateTime
+  reason      String
+  status      AppointmentStatus @default(SCHEDULED)
+  createdAt   DateTime          @default(now())
+  patient     Patient           @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  clinician   User              @relation(fields: [clinicianId], references: [id], onDelete: Restrict)
+  visit       Visit?
+  @@index([clinicianId, startsAt])
+  @@index([patientId, startsAt])
+}
+
+model Visit {
+  id             String       @id @default(cuid())
+  patientId      String
+  appointmentId  String?      @unique
+  clinicianId    String
+  occurredAt     DateTime     @default(now())
+  chiefComplaint String
+  diagnosis      String
+  notes          String       @default("")
+  temperatureC   Decimal?     @db.Decimal(4, 1)
+  systolic       Int?
+  diastolic      Int?
+  pulseBpm       Int?
+  weightKg       Decimal?     @db.Decimal(5, 2)
+  patient        Patient      @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  appointment    Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  clinician      User         @relation(fields: [clinicianId], references: [id], onDelete: Restrict)
+  prescriptions  Prescription[]
+  @@index([patientId, occurredAt])
+}
+
+model Medicine {
+  id           String            @id @default(cuid())
+  sku          String            @unique
+  name         String
+  genericName  String?
+  category     String
+  unit         String            @default("tablet")
+  sellingPrice Decimal           @db.Decimal(10, 2)
+  reorderLevel Int               @default(0)
+  isActive     Boolean           @default(true)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  batches      MedicineBatch[]
+  prescriptionItems PrescriptionItem[]
+  invoiceItems InvoiceItem[]
+  stockMovements StockMovement[]
+  @@index([name])
+}
+
+model Supplier {
+  id        String          @id @default(cuid())
+  name      String          @unique
+  phone     String?
+  email     String?
+  batches   MedicineBatch[]
+}
+
+model MedicineBatch {
+  id          String    @id @default(cuid())
+  medicineId  String
+  supplierId  String?
+  batchNumber String
+  quantity    Int
+  unitCost    Decimal   @db.Decimal(10, 2)
+  expiresAt   DateTime
+  receivedAt  DateTime  @default(now())
+  medicine    Medicine @relation(fields: [medicineId], references: [id], onDelete: Restrict)
+  supplier    Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  movements   StockMovement[]
+  @@unique([medicineId, batchNumber])
+  @@index([expiresAt])
+}
+
+model StockMovement {
+  id          String         @id @default(cuid())
+  medicineId  String
+  batchId     String?
+  quantity    Int
+  reason      String
+  reference   String?
+  createdAt   DateTime       @default(now())
+  medicine    Medicine      @relation(fields: [medicineId], references: [id], onDelete: Restrict)
+  batch       MedicineBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  @@index([medicineId, createdAt])
+}
+
+model Prescription {
+  id            String             @id @default(cuid())
+  patientId     String
+  clinicianId   String
+  visitId       String?
+  issuedAt      DateTime           @default(now())
+  diagnosis     String
+  notes         String             @default("")
+  patient       Patient            @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  clinician     User               @relation(fields: [clinicianId], references: [id], onDelete: Restrict)
+  visit         Visit?             @relation(fields: [visitId], references: [id], onDelete: SetNull)
+  items         PrescriptionItem[]
+  invoice       Invoice?
+  @@index([patientId, issuedAt])
+}
+
+model PrescriptionItem {
+  id            String       @id @default(cuid())
+  prescriptionId String
+  medicineId    String
+  dosage        String
+  frequency     String
+  duration      String
+  quantity      Int
+  instructions  String       @default("")
+  prescription  Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+  medicine      Medicine     @relation(fields: [medicineId], references: [id], onDelete: Restrict)
+  @@index([medicineId])
+}
+
+model Invoice {
+  id             String        @id @default(cuid())
+  invoiceNumber  String        @unique
+  patientId      String
+  prescriptionId String?       @unique
+  issuedAt       DateTime      @default(now())
+  dueAt          DateTime?
+  consultationFee Decimal     @default(0) @db.Decimal(10, 2)
+  subtotal       Decimal       @db.Decimal(10, 2)
+  tax            Decimal       @default(0) @db.Decimal(10, 2)
+  total          Decimal       @db.Decimal(10, 2)
+  status         InvoiceStatus @default(PENDING)
+  paidAt         DateTime?
+  patient        Patient       @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  prescription   Prescription? @relation(fields: [prescriptionId], references: [id], onDelete: SetNull)
+  items          InvoiceItem[]
+  @@index([patientId, issuedAt])
+  @@index([status, dueAt])
+}
+
+model InvoiceItem {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  medicineId  String?
+  description String
+  quantity    Int
+  unitPrice   Decimal  @db.Decimal(10, 2)
+  lineTotal   Decimal  @db.Decimal(10, 2)
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  medicine    Medicine? @relation(fields: [medicineId], references: [id], onDelete: SetNull)
+  @@index([medicineId])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorId     String?
+  action      String
+  entityType  String
+  entityId    String
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  actor       User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  @@index([entityType, entityId, createdAt])
+}
